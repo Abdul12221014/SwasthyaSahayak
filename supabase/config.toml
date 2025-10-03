@@ -1,1 +1,7 @@
 project_id = "vcymocxqfbowuvihtdku"
+
+[functions.health-query]
+verify_jwt = false
+
+[functions.admin-queries]
+verify_jwt = false

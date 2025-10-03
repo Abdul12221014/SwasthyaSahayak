@@ -17,11 +17,13 @@ export type Database = {
       health_queries: {
         Row: {
           accuracy_rating: string | null
+          channel: string | null
           citations: string[] | null
           created_at: string
           id: string
           is_emergency: boolean | null
           original_query: string
+          phone_number: string | null
           response: string | null
           translated_query: string | null
           updated_at: string
@@ -29,11 +31,13 @@ export type Database = {
         }
         Insert: {
           accuracy_rating?: string | null
+          channel?: string | null
           citations?: string[] | null
           created_at?: string
           id?: string
           is_emergency?: boolean | null
           original_query: string
+          phone_number?: string | null
           response?: string | null
           translated_query?: string | null
           updated_at?: string
@@ -41,11 +45,13 @@ export type Database = {
         }
         Update: {
           accuracy_rating?: string | null
+          channel?: string | null
           citations?: string[] | null
           created_at?: string
           id?: string
           is_emergency?: boolean | null
           original_query?: string
+          phone_number?: string | null
           response?: string | null
           translated_query?: string | null
           updated_at?: string

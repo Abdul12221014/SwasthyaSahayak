@@ -166,9 +166,9 @@ serve(async (req) => {
   }
 
   try {
-    const { user_language: userLanguage, query } = await req.json();
+    const { user_language: userLanguage, query, channel, phone_number } = await req.json();
     
-    console.log('Processing query:', { userLanguage, query });
+    console.log('Processing query:', { userLanguage, query, channel, phone_number });
     
     // Step 1: Language detection and translation
     const detectedLang = userLanguage || detectLanguage(query);
@@ -208,7 +208,9 @@ serve(async (req) => {
         response: finalResponse,
         citations,
         is_emergency: isEmergency,
-        accuracy_rating: 'pending'
+        accuracy_rating: 'pending',
+        channel: channel || 'web',
+        phone_number: phone_number || null
       })
       .select()
       .single();

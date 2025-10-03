@@ -5,3 +5,9 @@ verify_jwt = false
 
 [functions.admin-queries]
 verify_jwt = false
+
+[functions.whatsapp-webhook]
+verify_jwt = false
+
+[functions.sms-webhook]
+verify_jwt = false

@@ -24,6 +24,8 @@ interface QueryLog {
   is_emergency: boolean;
   accuracy_rating: string;
   created_at: string;
+  channel: string;
+  phone_number: string | null;
 }
 
 interface Analytics {
@@ -31,6 +33,7 @@ interface Analytics {
   emergencyCount: number;
   accuracyPercentage: number;
   languageDistribution: Record<string, number>;
+  channelDistribution: Record<string, number>;
   topQueries: Array<{ word: string; count: number }>;
   weeklyEmergencies: number;
   ratedQueriesCount: number;
@@ -68,19 +71,75 @@ const Admin = () => {
 
   const fetchData = async () => {
     try {
-      // Fetch queries
-      const { data: queriesData, error: queriesError } = await supabase.functions.invoke('admin-queries');
+      // Fetch queries directly from database
+      const { data: queriesData, error: queriesError } = await supabase
+        .from('health_queries')
+        .select('*')
+        .order('created_at', { ascending: false });
       
       if (queriesError) throw queriesError;
       
-      setQueries(queriesData.queries || []);
+      setQueries(queriesData || []);
 
-      // Fetch analytics
-      const { data: analyticsData, error: analyticsError } = await supabase.functions.invoke('admin-queries/analytics');
+      // Calculate analytics from queries
+      const allQueries = queriesData || [];
+      const totalQueries = allQueries.length;
+      const emergencyCount = allQueries.filter(q => q.is_emergency).length;
       
-      if (analyticsError) throw analyticsError;
+      // Accuracy calculation
+      const ratedQueries = allQueries.filter(q => q.accuracy_rating !== 'pending');
+      const correctQueries = ratedQueries.filter(q => q.accuracy_rating === 'correct').length;
+      const accuracyPercentage = ratedQueries.length > 0 
+        ? Math.round((correctQueries / ratedQueries.length) * 100)
+        : 0;
+
+      // Language distribution
+      const languageDistribution: Record<string, number> = {};
+      allQueries.forEach(q => {
+        languageDistribution[q.user_language] = (languageDistribution[q.user_language] || 0) + 1;
+      });
+
+      // Channel distribution
+      const channelDistribution: Record<string, number> = {};
+      allQueries.forEach(q => {
+        const channel = q.channel || 'web';
+        channelDistribution[channel] = (channelDistribution[channel] || 0) + 1;
+      });
+
+      // Common queries (simplified - extract keywords)
+      const queryWords: Record<string, number> = {};
+      allQueries.forEach(q => {
+        const words = q.translated_query?.toLowerCase().split(' ') || [];
+        words.forEach((word: string) => {
+          if (word.length > 4) {
+            queryWords[word] = (queryWords[word] || 0) + 1;
+          }
+        });
+      });
+
+      const topQueries = Object.entries(queryWords)
+        .sort(([, a], [, b]) => b - a)
+        .slice(0, 10)
+        .map(([word, count]) => ({ word, count }));
+
+      // Weekly emergency trend (last 7 days)
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
       
-      setAnalytics(analyticsData);
+      const weeklyEmergencies = allQueries.filter(q => 
+        q.is_emergency && new Date(q.created_at) >= sevenDaysAgo
+      ).length;
+
+      setAnalytics({
+        totalQueries,
+        emergencyCount,
+        accuracyPercentage,
+        languageDistribution,
+        channelDistribution,
+        topQueries,
+        weeklyEmergencies,
+        ratedQueriesCount: ratedQueries.length
+      });
     } catch (error) {
       console.error('Error fetching data:', error);
       toast({
@@ -95,10 +154,10 @@ const Admin = () => {
 
   const updateAccuracy = async (id: string, rating: 'correct' | 'incorrect') => {
     try {
-      const { error } = await supabase.functions.invoke(`admin-queries/${id}`, {
-        method: 'PATCH',
-        body: { accuracy_rating: rating }
-      });
+      const { error } = await supabase
+        .from('health_queries')
+        .update({ accuracy_rating: rating })
+        .eq('id', id);
 
       if (error) throw error;
 
@@ -186,6 +245,29 @@ const Admin = () => {
         </Card>
       </div>
 
+      {/* Channel Distribution */}
+      <Card className="mb-8 shadow-[var(--shadow-card)]">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <TrendingUp className="h-5 w-5" />
+            Channel Distribution
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap gap-3">
+            {Object.entries(analytics?.channelDistribution || {}).map(([channel, count]) => {
+              const total = analytics?.totalQueries || 1;
+              const percentage = Math.round((count / total) * 100);
+              return (
+                <Badge key={channel} variant="secondary" className="px-4 py-2 text-sm">
+                  {channel.toUpperCase()}: {count} ({percentage}%)
+                </Badge>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Language Distribution */}
       <Card className="mb-8 shadow-[var(--shadow-card)]">
         <CardHeader>
@@ -232,6 +314,7 @@ const Admin = () => {
               <TableHeader>
                 <TableRow>
                   <TableHead>Timestamp</TableHead>
+                  <TableHead>Channel</TableHead>
                   <TableHead>Language</TableHead>
                   <TableHead>Query</TableHead>
                   <TableHead>Emergency</TableHead>
@@ -244,6 +327,13 @@ const Admin = () => {
                   <TableRow key={query.id}>
                     <TableCell className="text-xs">
                       {new Date(query.created_at).toLocaleString()}
+                    </TableCell>
+                    <TableCell>
+                      <Badge 
+                        variant={query.channel === 'web' ? 'default' : query.channel === 'whatsapp' ? 'secondary' : 'outline'}
+                      >
+                        {query.channel || 'web'}
+                      </Badge>
                     </TableCell>
                     <TableCell>
                       <Badge variant="secondary">{query.user_language}</Badge>

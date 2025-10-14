@@ -1,0 +1,47 @@
+# Training Configuration for SwasthyaSahayak ML Models
+
+model:
+  base_model: "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+  embedding_dim: 768
+  
+data:
+  train_path: "../data/processed/train_pairs.csv"
+  val_path: "../data/processed/val_pairs.csv"
+  test_path: "../data/processed/test_pairs.csv"
+  max_seq_length: 512
+
+training:
+  output_dir: "../models/embeddings/model_v1"
+  num_epochs: 10
+  batch_size: 16
+  learning_rate: 2e-5
+  warmup_ratio: 0.1
+  eval_steps: 500
+  save_steps: 1000
+  use_wandb: false
+  seed: 42
+
+evaluation:
+  metrics:
+    - "cosine_similarity"
+    - "spearman_correlation"
+    - "mrr"
+  
+emergency_classifier:
+  base_model: "bert-base-multilingual-cased"
+  num_labels: 2
+  threshold: 0.75
+  output_dir: "../models/emergency/model_v1"
+
+translation:
+  base_model: "facebook/m2m100_418M"
+  source_langs: ["hi", "or", "as"]
+  target_lang: "en"
+  output_dir: "../models/translation/model_v1"
+
+inference:
+  model_path: "../models/embeddings/model_v1"
+  device: "cuda"
+  batch_size: 32
+  api_port: 8000
+

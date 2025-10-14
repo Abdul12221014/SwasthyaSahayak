@@ -1,0 +1,23 @@
+# Ignore large directories that cause memory issues
+Library/
+node_modules/
+.git/
+.DS_Store
+*.log
+dist/
+build/
+.cache/
+
+# Ignore iCloud and other system directories
+**/Library/Mobile Documents/**
+**/iCloud/**
+**/Documents/**
+
+# Ignore large files
+*.epub
+*.pdf
+*.zip
+*.tar.gz
+*.mp4
+*.mov
+*.avi

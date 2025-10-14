@@ -1,0 +1,22 @@
+{
+  "embedding_model": "v1.0.0",
+  "emergency_classifier": "v1.0.0",
+  "translation_model": "v1.0.0",
+  "last_updated": "2025-01-13T00:00:00Z",
+  "metadata": {
+    "embedding_model": {
+      "dimension": 768,
+      "base": "paraphrase-multilingual-mpnet-base-v2",
+      "trained_on": "health_qa_pairs_dataset_v1"
+    },
+    "emergency_classifier": {
+      "accuracy": 0.95,
+      "threshold": 0.75,
+      "base": "bert-base-multilingual-cased"
+    },
+    "translation_model": {
+      "base": "facebook/m2m100_418M",
+      "languages": ["en", "hi", "or", "as"]
+    }
+  }
+}

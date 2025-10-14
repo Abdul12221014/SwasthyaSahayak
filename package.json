@@ -8,7 +8,15 @@
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "deno test src/backend/tests/ --allow-net --allow-env",
+    "test:ml": "python -m pytest src/ml/tests/ -v",
+    "test:e2e": "deno test src/backend/tests/e2e.*.test.ts --allow-net --allow-env",
+    "test:all": "npm run test && npm run test:ml && npm run test:e2e",
+    "load:k6": "k6 run k6/health-query.js",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

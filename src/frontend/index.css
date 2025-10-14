@@ -1,0 +1,124 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* SwasthyaSahayak Design System 
+All colors, gradients, fonts defined here. All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    --background: 210 20% 98%;
+    --foreground: 222 47% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    --primary: 174 62% 37%;
+    --primary-foreground: 0 0% 100%;
+    
+    --primary-glow: 174 62% 47%;
+
+    --secondary: 142 52% 96%;
+    --secondary-foreground: 174 62% 27%;
+
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+
+    --accent: 142 76% 36%;
+    --accent-foreground: 0 0% 100%;
+    
+    --success: 142 76% 36%;
+    --success-foreground: 0 0% 100%;
+    
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 174 62% 37%;
+
+    --radius: 0.75rem;
+    
+    --gradient-health: linear-gradient(135deg, hsl(174 62% 37%), hsl(174 62% 47%));
+    --shadow-card: 0 4px 6px -1px hsl(174 62% 37% / 0.1), 0 2px 4px -2px hsl(174 62% 37% / 0.1);
+    --shadow-elevated: 0 10px 15px -3px hsl(174 62% 37% / 0.15), 0 4px 6px -4px hsl(174 62% 37% / 0.1);
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-primary: 240 5.9% 10%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 240 4.8% 95.9%;
+    --sidebar-accent-foreground: 240 5.9% 10%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+
+  .dark {
+    --background: 222 47% 11%;
+    --foreground: 210 40% 98%;
+
+    --card: 217 33% 17%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 217 33% 17%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 174 62% 47%;
+    --primary-foreground: 0 0% 100%;
+    
+    --primary-glow: 174 62% 57%;
+
+    --secondary: 217 33% 20%;
+    --secondary-foreground: 174 62% 67%;
+
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 65%;
+
+    --accent: 142 76% 46%;
+    --accent-foreground: 0 0% 100%;
+    
+    --success: 142 76% 46%;
+    --success-foreground: 0 0% 100%;
+    
+    --warning: 38 92% 60%;
+    --warning-foreground: 0 0% 100%;
+
+    --destructive: 0 63% 31%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 217 33% 20%;
+    --input: 217 33% 20%;
+    --ring: 174 62% 47%;
+    
+    --gradient-health: linear-gradient(135deg, hsl(174 62% 37%), hsl(174 62% 57%));
+    --shadow-card: 0 4px 6px -1px hsl(174 62% 27% / 0.2), 0 2px 4px -2px hsl(174 62% 27% / 0.15);
+    --shadow-elevated: 0 10px 15px -3px hsl(174 62% 27% / 0.25), 0 4px 6px -4px hsl(174 62% 27% / 0.2);
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 224.3 76.3% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+

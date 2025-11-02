@@ -143,22 +143,22 @@ serve(async (req) => {
     );
 
     const documents = chunks.map((chunk, index) => ({
-      title,
-      language,
-      source,
-      category: category || null,
       content: chunk,
-      chunk_index: index,
+      metadata: {
+        title,
+        language,
+        source,
+        category: category || null,
+        chunk_index: index,
+        url: source // Use source as URL for now
+      },
       embedding: embeddings[index]
     }));
 
-    // Upsert (idempotent - update if exists)
+    // Insert into Supabase Vector table
     const { data, error } = await supabase
       .from('health_documents')
-      .upsert(documents, {
-        onConflict: 'source,chunk_index',
-        ignoreDuplicates: false
-      })
+      .insert(documents)
       .select();
 
     if (error) {

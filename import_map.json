@@ -1,0 +1,9 @@
+{
+  "imports": {
+    "@/backend": "./src/backend/",
+    "@/frontend": "./src/frontend/",
+    "@/shared": "./src/shared/",
+    "@/ml": "./src/ml/"
+  }
+}
+

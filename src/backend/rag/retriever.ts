@@ -7,6 +7,7 @@
  * @module backend/rag/retriever
  */
 
+// @ts-ignore - Deno runtime module
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.39.7';
 
 export interface RetrievedDocument {
@@ -36,7 +37,7 @@ export class RAGRetriever {
   constructor(
     supabaseUrl: string,
     supabaseKey: string,
-    tableName: string = 'health_knowledge_embeddings'
+    tableName: string = 'health_documents'
   ) {
     this.supabase = createClient(supabaseUrl, supabaseKey);
     this.tableName = tableName;
@@ -61,34 +62,46 @@ export class RAGRetriever {
     } = options;
 
     try {
-      // Build query with filters
-      let query = this.supabase
-        .rpc('match_health_documents', {
+      // Build query with filters using Supabase Vector
+      const { data, error } = await this.supabase
+        .rpc('match_documents', {
           query_embedding: queryEmbedding,
           match_threshold: minSimilarity,
           match_count: topK
         });
-
-      // Apply optional filters
-      if (language) {
-        query = query.eq('metadata->>language', language);
-      }
-      if (category) {
-        query = query.eq('metadata->>category', category);
-      }
-
-      const { data, error } = await query;
 
       if (error) {
         console.error('Retrieval error:', error);
         throw error;
       }
 
-      return data.map((doc: any) => ({
-        id: doc.id,
-        content: doc.content,
-        metadata: doc.metadata,
-        similarity: doc.similarity
+      // Filter results by language and category if specified
+      let filteredData = data || [];
+      
+      if (language) {
+        filteredData = filteredData.filter((doc: any) => 
+          doc.metadata?.language === language
+        );
+      }
+      
+      if (category) {
+        filteredData = filteredData.filter((doc: any) => 
+          doc.metadata?.category === category
+        );
+      }
+
+      // Supabase RPC returns: { id, content, metadata, similarity }
+      return filteredData.map((doc: any) => ({
+        id: doc.id || doc.id?.toString(),
+        content: doc.content || '',
+        metadata: doc.metadata || {
+          source: doc.source || 'unknown',
+          title: doc.title || '',
+          language: doc.language || 'en',
+          category: doc.category,
+          link: doc.link
+        },
+        similarity: doc.similarity || 0
       }));
 
     } catch (error) {

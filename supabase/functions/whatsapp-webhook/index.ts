@@ -1,4 +1,8 @@
+// Deno runtime - type declarations for IDE
+// @ts-expect-error - Deno runtime types not available in IDE
+/// <reference lib="deno.ns" />
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+// @ts-expect-error - Supabase types from remote URL
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.7";
 
 const corsHeaders = {
@@ -10,6 +14,7 @@ const corsHeaders = {
 function verifyTwilioSignature(url: string, params: Record<string, string>, signature: string): boolean {
   // In production, implement proper Twilio signature verification
   // For now, return true for testing
+  // @ts-expect-error - Deno.env is available at runtime
   const twilioAuthToken = Deno.env.get('TWILIO_AUTH_TOKEN');
   if (!twilioAuthToken) {
     console.warn('TWILIO_AUTH_TOKEN not set, skipping signature verification');
@@ -64,7 +69,9 @@ serve(async (req) => {
 
     // Call the health-query edge function
     const supabase = createClient(
+      // @ts-expect-error - Deno.env is available at runtime
       Deno.env.get('SUPABASE_URL') ?? '',
+      // @ts-expect-error - Deno.env is available at runtime
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
@@ -82,23 +89,32 @@ serve(async (req) => {
       throw healthError;
     }
 
+    // Validate healthData exists and has required fields
+    if (!healthData) {
+      throw new Error('No response data from health-query function');
+    }
+
     console.log('Health query response:', healthData);
 
-    // Format WhatsApp response
-    let whatsappMessage = healthData.response;
+    // Format WhatsApp response (safe access with fallback)
+    const responseText = healthData.response || 'I apologize, but I could not process your query. Please try again or contact a healthcare professional.';
+    let whatsappMessage = responseText;
     
-    // Add citations
-    if (healthData.citations && healthData.citations.length > 0) {
+    // Add citations (safe access with array check)
+    if (healthData.citations && Array.isArray(healthData.citations) && healthData.citations.length > 0) {
       whatsappMessage += '\n\n📚 *Sources:*\n';
       healthData.citations.forEach((citation: string, idx: number) => {
         const parts = citation.split(': ');
-        whatsappMessage += `${idx + 1}. ${parts[0]}\n`;
+        whatsappMessage += `${idx + 1}. ${parts[0] || citation}\n`;
       });
     }
 
     // Send WhatsApp reply via Twilio
+    // @ts-expect-error - Deno.env is available at runtime
     const twilioAccountSid = Deno.env.get('TWILIO_ACCOUNT_SID');
+    // @ts-expect-error - Deno.env is available at runtime
     const twilioAuthToken = Deno.env.get('TWILIO_AUTH_TOKEN');
+    // @ts-expect-error - Deno.env is available at runtime
     const twilioWhatsappNumber = Deno.env.get('TWILIO_WHATSAPP_NUMBER') || 'whatsapp:+14155238886';
 
     if (twilioAccountSid && twilioAuthToken && from.startsWith('whatsapp:')) {

@@ -1,4 +1,8 @@
+// Deno runtime - type declarations for IDE
+// @ts-expect-error - Deno runtime types not available in IDE
+/// <reference lib="deno.ns" />
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+// @ts-expect-error - Supabase types from remote URL
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.7";
 
 const corsHeaders = {
@@ -42,7 +46,9 @@ serve(async (req) => {
 
     // Call the health-query edge function
     const supabase = createClient(
+      // @ts-expect-error - Deno.env is available at runtime
       Deno.env.get('SUPABASE_URL') ?? '',
+      // @ts-expect-error - Deno.env is available at runtime
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
@@ -60,28 +66,41 @@ serve(async (req) => {
       throw healthError;
     }
 
+    // Validate healthData exists and has required fields
+    if (!healthData) {
+      throw new Error('No response data from health-query function');
+    }
+
     console.log('Health query response:', healthData);
 
     // Format SMS-friendly response (short, < 300 chars)
     let smsMessage = '';
     
-    if (healthData.is_emergency) {
+    // Check for emergency flag (safe access)
+    if (healthData.is_emergency === true) {
       smsMessage = '⚠️ EMERGENCY: Seek immediate help. Call 108.\n\n';
     }
     
+    // Safely extract main response
+    const responseText = healthData.response || 'I apologize, but I could not process your query. Please try again or contact a healthcare professional.';
+    
     // Truncate main response to fit SMS limits
-    const mainResponse = healthData.response.split('\n\n')[0]; // Take first paragraph
+    const mainResponse = responseText.split('\n\n')[0] || responseText; // Take first paragraph or full text
     smsMessage += truncateForSMS(mainResponse, 250);
     
-    // Add one citation if space permits
-    if (healthData.citations && healthData.citations.length > 0 && smsMessage.length < 280) {
-      const citation = healthData.citations[0].split(': ')[0];
+    // Add one citation if space permits (safe access)
+    if (healthData.citations && Array.isArray(healthData.citations) && healthData.citations.length > 0 && smsMessage.length < 280) {
+      const citationParts = healthData.citations[0].split(': ');
+      const citation = citationParts[0] || healthData.citations[0]; // Fallback to full citation if split fails
       smsMessage += `\n\nSource: ${citation}`;
     }
 
     // Send SMS reply via Twilio
+    // @ts-expect-error - Deno.env is available at runtime
     const twilioAccountSid = Deno.env.get('TWILIO_ACCOUNT_SID');
+    // @ts-expect-error - Deno.env is available at runtime
     const twilioAuthToken = Deno.env.get('TWILIO_AUTH_TOKEN');
+    // @ts-expect-error - Deno.env is available at runtime
     const twilioPhoneNumber = Deno.env.get('TWILIO_PHONE_NUMBER');
 
     if (twilioAccountSid && twilioAuthToken && twilioPhoneNumber) {

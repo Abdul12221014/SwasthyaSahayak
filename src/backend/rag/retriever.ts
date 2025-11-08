@@ -63,10 +63,11 @@ export class RAGRetriever {
 
     try {
       // Build query with filters using Supabase Vector
+      // Note: Function name matches migration: match_health_documents
       const { data, error } = await this.supabase
-        .rpc('match_documents', {
+        .rpc('match_health_documents', {
           query_embedding: queryEmbedding,
-          match_threshold: minSimilarity,
+          similarity_threshold: minSimilarity,
           match_count: topK
         });
 
@@ -76,30 +77,32 @@ export class RAGRetriever {
       }
 
       // Filter results by language and category if specified
+      // Note: DB returns flat fields (not nested metadata)
       let filteredData = data || [];
       
       if (language) {
         filteredData = filteredData.filter((doc: any) => 
-          doc.metadata?.language === language
+          doc.language === language
         );
       }
       
       if (category) {
         filteredData = filteredData.filter((doc: any) => 
-          doc.metadata?.category === category
+          doc.category === category
         );
       }
 
-      // Supabase RPC returns: { id, content, metadata, similarity }
+      // Supabase RPC returns flat fields: { id, content, title, source, category, language, similarity }
+      // Map to RetrievedDocument interface with nested metadata
       return filteredData.map((doc: any) => ({
         id: doc.id || doc.id?.toString(),
         content: doc.content || '',
-        metadata: doc.metadata || {
+        metadata: {
           source: doc.source || 'unknown',
           title: doc.title || '',
           language: doc.language || 'en',
-          category: doc.category,
-          link: doc.link
+          category: doc.category || undefined,
+          link: doc.source // Use source as link for now
         },
         similarity: doc.similarity || 0
       }));

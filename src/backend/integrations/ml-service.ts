@@ -7,7 +7,8 @@
  * @module backend/integrations/ml-service
  */
 
-const ML_SERVICE_URL = process.env.ML_SERVICE_URL || 'http://localhost:8000';
+// @ts-ignore - Deno environment
+const ML_SERVICE_URL = (typeof Deno !== 'undefined' ? Deno.env.get('ML_SERVICE_URL') : process.env.ML_SERVICE_URL) || 'http://localhost:8000';
 const REQUEST_TIMEOUT = 3000; // 3 seconds max
 
 /**

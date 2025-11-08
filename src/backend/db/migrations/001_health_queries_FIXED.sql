@@ -1,6 +1,7 @@
--- Health Queries Table Migration
--- Creates the main health_queries table for storing user interactions
+-- Health Queries Table Migration (FIXED VERSION)
+-- Run this ENTIRE SQL script in one go
 
+-- Step 1: Create the table
 CREATE TABLE IF NOT EXISTS public.health_queries (
   id UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
   user_language TEXT NOT NULL,
@@ -16,10 +17,15 @@ CREATE TABLE IF NOT EXISTS public.health_queries (
   updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
 );
 
--- Enable Row Level Security
+-- Step 2: Enable Row Level Security
 ALTER TABLE public.health_queries ENABLE ROW LEVEL SECURITY;
 
--- Create policies for public access (no authentication required for this public health service)
+-- Step 3: Drop existing policies if they exist (to avoid conflicts)
+DROP POLICY IF EXISTS "Anyone can view health queries" ON public.health_queries;
+DROP POLICY IF EXISTS "Anyone can create health queries" ON public.health_queries;
+DROP POLICY IF EXISTS "Anyone can update health queries" ON public.health_queries;
+
+-- Step 4: Create policies
 CREATE POLICY "Anyone can view health queries" 
 ON public.health_queries 
 FOR SELECT 
@@ -35,7 +41,8 @@ ON public.health_queries
 FOR UPDATE 
 USING (true);
 
--- Create function to update timestamps
+-- Step 5: Create function for timestamp updates (drop if exists first)
+DROP FUNCTION IF EXISTS public.update_updated_at_column();
 CREATE OR REPLACE FUNCTION public.update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -44,13 +51,19 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SET search_path = public;
 
--- Create trigger for automatic timestamp updates
+-- Step 6: Drop trigger if exists, then create
+DROP TRIGGER IF EXISTS update_health_queries_updated_at ON public.health_queries;
 CREATE TRIGGER update_health_queries_updated_at
 BEFORE UPDATE ON public.health_queries
 FOR EACH ROW
 EXECUTE FUNCTION public.update_updated_at_column();
 
--- Create indexes for efficient querying
+-- Step 7: Create indexes (drop if exists first to avoid conflicts)
+DROP INDEX IF EXISTS idx_health_queries_created_at;
+DROP INDEX IF EXISTS idx_health_queries_language;
+DROP INDEX IF EXISTS idx_health_queries_accuracy;
+DROP INDEX IF EXISTS idx_health_queries_channel;
+
 CREATE INDEX idx_health_queries_created_at ON public.health_queries(created_at DESC);
 CREATE INDEX idx_health_queries_language ON public.health_queries(user_language);
 CREATE INDEX idx_health_queries_accuracy ON public.health_queries(accuracy_rating);

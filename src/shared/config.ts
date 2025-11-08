@@ -19,6 +19,19 @@ export interface MLConfig {
   geminiApiKey: string;
 }
 
+export interface GeminiAgentConfig {
+  enabled: boolean;
+  apiKey: string;
+  apiUrl: string;
+  model: string;
+  temperature: number;
+  maxTokens: number;
+  maxToolCalls: number;
+  requestTimeoutMs: number;
+  rateLimitPerMinute: number;
+  dailyBudgetUsd: number;
+}
+
 export interface VectorConfig {
   dimension: number;
   similarityThreshold: number;
@@ -29,6 +42,7 @@ export interface AppConfig {
   supabase: SupabaseConfig;
   ml: MLConfig;
   vector: VectorConfig;
+  geminiAgent: GeminiAgentConfig;
   env: string;
 }
 
@@ -66,6 +80,24 @@ export function getVectorConfig(): VectorConfig {
 }
 
 /**
+ * Get Gemini Agent configuration
+ */
+export function getGeminiAgentConfig(): GeminiAgentConfig {
+  return {
+    enabled: getEnv('FEATURE_GEMINI_AGENT') === 'true',
+    apiKey: getEnv('GEMINI_API_KEY') || '',
+    apiUrl: getEnv('GEMINI_API_URL') || 'https://generativelanguage.googleapis.com/v1beta',
+    model: getEnv('GEMINI_MODEL') || 'gemini-2.0-flash-exp',
+    temperature: parseFloat(getEnv('GEMINI_TEMPERATURE') || '0.3'),
+    maxTokens: parseInt(getEnv('GEMINI_MAX_TOKENS') || '2048'),
+    maxToolCalls: parseInt(getEnv('GEMINI_MAX_TOOL_CALLS') || '5'),
+    requestTimeoutMs: parseInt(getEnv('AGENT_REQUEST_TIMEOUT_MS') || '10000'),
+    rateLimitPerMinute: parseInt(getEnv('AGENT_RATE_LIMIT_PER_MIN') || '15'),
+    dailyBudgetUsd: parseFloat(getEnv('AGENT_DAILY_BUDGET_USD') || '2.0')
+  };
+}
+
+/**
  * Get complete application configuration
  */
 export function getAppConfig(): AppConfig {
@@ -73,6 +105,7 @@ export function getAppConfig(): AppConfig {
     supabase: getSupabaseConfig(),
     ml: getMLConfig(),
     vector: getVectorConfig(),
+    geminiAgent: getGeminiAgentConfig(),
     env: getEnv('NODE_ENV') || getEnv('ENV_NAME') || 'development'
   };
 }

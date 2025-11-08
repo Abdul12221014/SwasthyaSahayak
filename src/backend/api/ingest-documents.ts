@@ -142,17 +142,19 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
+    // Map chunks to table structure (flat fields, not nested metadata)
     const documents = chunks.map((chunk, index) => ({
+      title: title,
+      language: language || 'en',
+      source: source,
+      category: category || null,
       content: chunk,
+      chunk_index: index,
+      embedding: embeddings[index],
       metadata: {
-        title,
-        language,
-        source,
-        category: category || null,
-        chunk_index: index,
-        url: source // Use source as URL for now
-      },
-      embedding: embeddings[index]
+        url: source, // Additional metadata in JSONB
+        original_title: title
+      }
     }));
 
     // Insert into Supabase Vector table

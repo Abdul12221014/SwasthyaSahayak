@@ -3,7 +3,6 @@ import { Button } from "@/frontend/components/ui/button";
 import { Textarea } from "@/frontend/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/frontend/components/ui/card";
 import { Badge } from "@/frontend/components/ui/badge";
-import { supabase } from "@/backend/integrations/supabase/client";
 import { useToast } from "@/frontend/hooks/use-toast";
 import { Send, Bot, User, AlertTriangle, ExternalLink } from "lucide-react";
 import { debug } from "@/frontend/lib/logger";
@@ -58,14 +57,25 @@ const Chat = () => {
     setLoading(true);
 
     try {
-      const { data, error } = await supabase.functions.invoke('health-query', {
-        body: {
+      // Ensure a stable sessionId per browser
+      let sid = localStorage.getItem('ss_session');
+      if (!sid) {
+        sid = (crypto as any).randomUUID ? (crypto as any).randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        localStorage.setItem('ss_session', sid);
+      }
+
+      const resp = await fetch('http://localhost:3001/api/health-query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           user_language: language,
-          query: input
-        }
+          query: input,
+          sessionId: `web-${sid}`
+        })
       });
 
-      if (error) throw error;
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
 
       const assistantMessage: Message = {
         id: data.id,

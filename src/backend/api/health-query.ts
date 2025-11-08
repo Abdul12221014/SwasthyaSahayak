@@ -1,9 +1,30 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.7";
-import { findNearestFacilities } from "@/backend/integrations/phc-directory";
-import { logger } from "@/backend/utils/logger.ts";
-import { metrics } from "@/backend/utils/metrics.ts";
-import { validator } from "@/backend/utils/validate.ts";
+// Removed serve import - using default export handler instead
+// Supabase client is imported dynamically to avoid IDE type resolution issues
+import { findNearestFacilities } from "../integrations/phc-directory.ts";
+import { logger } from "../utils/logger.ts";
+import { metrics } from "../utils/metrics.ts";
+import { getGeminiAgentConfig } from "../../shared/config.ts";
+import { runAgentOrchestration } from "../integrations/gemini-agent.ts";
+import { getSessionHistoryAsync, saveSessionQueryAsync } from "../utils/session-store.ts";
+import { RAGRetriever, KeywordRetriever, type RetrievedDocument } from "../rag/retriever.ts";
+import { getSingleEmbedding, isMLServiceHealthy } from "../integrations/ml-service.ts";
+
+// Router types
+export interface ConversationContext {
+  sessionId?: string;
+  previousQueries?: string[];
+  metadata?: {
+    language?: string;
+    location?: string;
+  };
+}
+
+export interface RoutingDecision {
+  useAgent: boolean;
+  reason: string;
+  confidence: number;
+  complexityScore: number;
+}
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -16,6 +37,106 @@ const EMERGENCY_KEYWORDS = [
   'unconscious', 'seizure', 'heavy bleeding', 'severe injury', 'stroke',
   'high fever child', 'baby not breathing', 'severe allergic reaction', 'anaphylaxis'
 ];
+
+// Health entities for entity counting
+const HEALTH_ENTITIES = [
+  'fever', 'cough', 'diarrhea', 'vaccination', 'malaria',
+  'tuberculosis', 'pain', 'bleeding', 'rash', 'breathing',
+  'headache', 'nausea', 'vomiting', 'rash', 'swelling'
+];
+
+/**
+ * Router: Decide between Backend Fast Path or Gemini Agent Path
+ * Implements exact complexity scoring algorithm from prompt
+ */
+function shouldUseAgentMode(
+  query: string,
+  context?: ConversationContext
+): RoutingDecision {
+  // Check feature flag first
+  const agentConfig = getGeminiAgentConfig();
+  if (!agentConfig.enabled) {
+    return {
+      useAgent: false,
+      reason: 'feature_disabled',
+      confidence: 1.0,
+      complexityScore: 0
+    };
+  }
+
+  // Emergency queries ALWAYS use backend (faster, more reliable)
+  const isLikelyEmergency = detectEmergency(query);
+  if (isLikelyEmergency) {
+    return {
+      useAgent: false,
+      reason: 'emergency_requires_fast_path',
+      confidence: 1.0,
+      complexityScore: 0
+    };
+  }
+
+  // Compute complexity score (0-10)
+  let complexityScore = 0;
+
+  // Quantitative metrics
+  const queryLength = query.length;
+  const sentenceCount = (query.match(/[.!?।॥]/g) || []).length;
+  // const questionCount = (query.match(/\?/g) || []).length; // not used currently
+
+  // Qualitative markers
+  const hasMultipleTopics = /\b(also|and|additionally|furthermore|what about|tell me about)\b/i.test(query);
+  const isMultiStepAsk = /^(how can|can you|explain|compare|step|steps)/i.test(query);
+  
+  // Entity counting (fallback for intent detection)
+  function countEntities(text: string): number {
+    const queryLower = text.toLowerCase();
+    return HEALTH_ENTITIES.filter(entity => queryLower.includes(entity)).length;
+  }
+  const entityCount = countEntities(query);
+  const hasMultipleEntities = entityCount > 2;
+
+  // Scoring algorithm (exact from prompt)
+  // +2 if query.length > 100
+  if (queryLength > 100) complexityScore += 2;
+
+  // +2 if sentenceCount > 1
+  if (sentenceCount > 1) complexityScore += 2;
+
+  // +2 if regex matches conversational markers
+  if (hasMultipleTopics) complexityScore += 2;
+
+  // +2 if starts with multi-step ask
+  if (isMultiStepAsk) complexityScore += 2;
+
+  // +2 if intent is ambiguous or contains multiple entities
+  if (hasMultipleEntities) complexityScore += 2;
+
+  // Context from conversation history
+  if (context?.previousQueries && context.previousQueries.length > 0) {
+    complexityScore += 2; // Multi-turn conversation
+  }
+
+  // Decision: Agent mode if score >= 5
+  const useAgent = complexityScore >= 5;
+
+  // Build reason string
+  const reasons: string[] = [];
+  if (queryLength > 100) reasons.push('long_query');
+  if (sentenceCount > 1) reasons.push('multi_sentence');
+  if (hasMultipleTopics) reasons.push('multiple_topics');
+  if (isMultiStepAsk) reasons.push('multi_step');
+  if (hasMultipleEntities) reasons.push('multiple_entities');
+  if (context?.previousQueries && context.previousQueries.length > 0) {
+    reasons.push('conversational');
+  }
+
+  return {
+    useAgent,
+    reason: reasons.join('+') || (useAgent ? 'complex' : 'simple'),
+    confidence: Math.min(complexityScore / 10, 1.0),
+    complexityScore
+  };
+}
 
 // Simulated health knowledge base (in production, this would be vector DB retrieval)
 const HEALTH_KNOWLEDGE = {
@@ -58,40 +179,148 @@ function detectLanguage(text: string): string {
   return 'english';
 }
 
+function getEnvVar(name: string): string {
+  try {
+    // Deno environment (runtime)
+    // @ts-ignore - Deno types may not be available in IDE
+    return (globalThis as any).Deno?.env.get(name) || '';
+  } catch {
+    return '';
+  }
+}
+
+async function getSupabaseClient(url: string, key: string) {
+  // @ts-ignore: Deno resolves this at runtime; IDE may not have types
+  const mod = await import("https://esm.sh/@supabase/supabase-js@2.39.7");
+  return mod.createClient(url, key);
+}
+
 async function translateText(text: string, fromLang: string): Promise<string> {
   // In production, use IndicTrans2 or Google Translate API
-  // For demo, we'll use Lovable AI for translation
-  if (fromLang === 'english') return text;
+  // For now, use Gemini API directly for translation
+  const normalizedLang = fromLang?.toLowerCase() || 'english';
+  if (normalizedLang === 'english' || normalizedLang === 'en') return text;
   
-  const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+  const geminiConfig = getGeminiAgentConfig();
+  const apiKey = geminiConfig.apiKey || getEnvVar('GEMINI_API_KEY');
   
-  const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+  if (!apiKey) {
+    console.warn('GEMINI_API_KEY not set, skipping translation');
+    return text;
+  }
+  
+  const model = geminiConfig.model || 'gemini-2.0-flash-exp';
+  const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  
+  const response = await fetch(apiUrl, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${LOVABLE_API_KEY}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'google/gemini-2.5-flash',
-      messages: [
-        {
-          role: 'system',
-          content: `You are a translator. Translate the following ${fromLang} text to English. Only return the translation, nothing else.`
-        },
-        {
-          role: 'user',
-          content: text
-        }
-      ]
+      contents: [{
+        parts: [{
+          text: `Translate the following ${fromLang} text to English. Only return the translation, nothing else.\n\n${text}`
+        }]
+      }]
     })
   });
-  
+
   const data = await response.json();
-  return data.choices[0].message.content;
+  
+  if (!data || !data.candidates || !data.candidates[0] || !data.candidates[0].content || !data.candidates[0].content.parts) {
+    console.warn('Gemini API returned unexpected format, returning original text');
+    return text;
+  }
+  
+  const translatedText = data.candidates[0].content.parts[0]?.text?.trim();
+  return translatedText || text;
 }
 
-function retrieveRelevantDocs(query: string): Array<{content: string, source: string, link: string}> {
-  // Simplified RAG - keyword matching (in production, use vector similarity)
+/**
+ * Retrieve relevant documents using RAG (vector search)
+ * Falls back to keyword matching if ML service or RAG is unavailable
+ */
+async function retrieveRelevantDocs(
+  query: string,
+  language?: string
+): Promise<Array<{content: string, source: string, link: string, title?: string}>> {
+  const supabaseUrl = getEnvVar('SUPABASE_URL');
+  const supabaseKey = getEnvVar('SUPABASE_SERVICE_ROLE_KEY');
+  
+  // Check if we have Supabase credentials
+  if (!supabaseUrl || !supabaseKey) {
+    logger.warn('Supabase credentials not configured, using keyword fallback');
+    return retrieveRelevantDocsKeywordFallback(query);
+  }
+  
+  // Check if ML service is available for embeddings
+  const mlServiceAvailable = await isMLServiceHealthy().catch(() => false);
+  
+  if (!mlServiceAvailable) {
+    logger.warn('ML service not available, using keyword fallback');
+    return retrieveRelevantDocsKeywordFallback(query);
+  }
+  
+  try {
+    // Step 1: Generate embedding for the query
+    logger.info('Generating query embedding for RAG retrieval');
+    const queryEmbedding = await getSingleEmbedding(query);
+    
+    if (!queryEmbedding || queryEmbedding.length === 0) {
+      logger.warn('Failed to generate embedding, using keyword fallback');
+      return retrieveRelevantDocsKeywordFallback(query);
+    }
+    
+    // Step 2: Initialize RAG Retriever
+    const retriever = new RAGRetriever(supabaseUrl, supabaseKey);
+    
+    // Step 3: Retrieve documents using vector search
+    const retrievedDocs = await retriever.retrieve(queryEmbedding, {
+      topK: 5,
+      minSimilarity: 0.6, // Lower threshold for better recall
+      language: language === 'en' ? 'en' : undefined, // Filter by language if English
+    });
+    
+    if (retrievedDocs.length === 0) {
+      logger.warn('No documents found via RAG, using keyword fallback');
+      return retrieveRelevantDocsKeywordFallback(query);
+    }
+    
+    logger.info(`Retrieved ${retrievedDocs.length} documents via RAG`, {
+      similarities: retrievedDocs.map(d => d.similarity)
+    });
+    
+    // Step 4: Convert RetrievedDocument format to expected format
+    return retrievedDocs.map(doc => ({
+      content: doc.content,
+      source: doc.metadata.source,
+      link: doc.metadata.link || doc.metadata.source,
+      title: doc.metadata.title,
+    }));
+    
+  } catch (error) {
+    if (error instanceof Error) {
+      logger.logError(error, {
+        operation: 'rag_retrieval',
+        query: query.substring(0, 100)
+      });
+    } else {
+      logger.error('RAG retrieval failed', {
+        operation: 'rag_retrieval',
+        query: query.substring(0, 100),
+        error: String(error)
+      });
+    }
+    logger.warn('RAG retrieval failed, using keyword fallback');
+    return retrieveRelevantDocsKeywordFallback(query);
+  }
+}
+
+/**
+ * Fallback keyword-based retrieval (used when RAG is unavailable)
+ */
+function retrieveRelevantDocsKeywordFallback(query: string): Array<{content: string, source: string, link: string}> {
   const results = [];
   const queryLower = query.toLowerCase();
   
@@ -121,15 +350,27 @@ function detectEmergency(query: string): boolean {
 }
 
 async function generateResponse(query: string, retrievedDocs: any[]): Promise<{response: string, citations: string[]}> {
-  const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+  // Use Gemini API directly for response generation
+  const geminiConfig = getGeminiAgentConfig();
+  const apiKey = geminiConfig.apiKey || getEnvVar('GEMINI_API_KEY');
+  
+  // Fallback response if no API key
+  if (!apiKey) {
+    console.warn('GEMINI_API_KEY not set, using fallback response');
+    const fallbackResponse = `Based on available health information regarding "${query}", please consult with a healthcare professional for accurate medical advice.`;
+    const citations = retrievedDocs.length > 0 
+      ? retrievedDocs.map(doc => `${doc.source}: ${doc.link}`)
+      : ['General Health Guidelines - WHO'];
+    return { response: fallbackResponse, citations };
+  }
   
   // Build context from retrieved documents
   const context = retrievedDocs.map((doc, idx) => 
-    `[Document ${idx + 1}]\nSource: ${doc.source}\nContent: ${doc.content}\nLink: ${doc.link}`
+    `[Document ${idx + 1}]\nSource: ${doc.source}${doc.title ? `\nTitle: ${doc.title}` : ''}\nContent: ${doc.content}\nLink: ${doc.link || doc.source}`
   ).join('\n\n');
   
   const systemPrompt = `You are a public health assistant for rural India. Answer health questions accurately and compassionately.
-  
+
 IMPORTANT RULES:
 1. Use the provided documents to answer the question
 2. Always cite your sources using [Document X] format
@@ -140,31 +381,50 @@ IMPORTANT RULES:
 Available Context:
 ${context}`;
 
-  const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+  const model = geminiConfig.model || 'gemini-2.0-flash-exp';
+  const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  
+  const response = await fetch(apiUrl, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${LOVABLE_API_KEY}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'google/gemini-2.5-flash',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: query }
-      ]
+      contents: [{
+        parts: [
+          { text: `${systemPrompt}\n\nQuestion: ${query}` }
+        ]
+      }],
+      generationConfig: {
+        temperature: geminiConfig.temperature,
+        maxOutputTokens: geminiConfig.maxTokens,
+      }
     })
   });
   
   const data = await response.json();
-  const aiResponse = data.choices[0].message.content;
+  
+  // Handle API response safely
+  if (!data || !data.candidates || !Array.isArray(data.candidates) || data.candidates.length === 0 || !data.candidates[0] || !data.candidates[0].content || !data.candidates[0].content.parts) {
+    console.warn('Gemini API returned unexpected format, using fallback');
+    const fallbackResponse = `Based on available health information regarding "${query}", please consult with a healthcare professional for accurate medical advice.`;
+    const citations = retrievedDocs.length > 0 
+      ? retrievedDocs.map(doc => `${doc.source}: ${doc.link}`)
+      : ['General Health Guidelines - WHO'];
+    return { response: fallbackResponse, citations };
+  }
+  
+  const aiResponse = data.candidates[0].content.parts[0]?.text?.trim() || `Based on available health information regarding "${query}", please consult with a healthcare professional for accurate medical advice.`;
   
   // Extract citations
-  const citations = retrievedDocs.map(doc => `${doc.source}: ${doc.link}`);
+  const citations = retrievedDocs.length > 0
+    ? retrievedDocs.map(doc => `${doc.source}: ${doc.link}`)
+    : ['General Health Guidelines - WHO'];
   
   return { response: aiResponse, citations };
 }
 
-serve(async (req) => {
+export default async function healthQueryHandler(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -173,7 +433,7 @@ serve(async (req) => {
   const startTime = Date.now();
 
   try {
-    const { user_language: userLanguage, query, channel, phone_number } = await req.json();
+    const { user_language: userLanguage, query, channel, phone_number, sessionId } = await req.json();
     
     logger.logRequestStart(requestId, req.method, '/health-query', {
       query: query?.substring(0, 100),
@@ -182,10 +442,111 @@ serve(async (req) => {
       phoneNumber: phone_number
     });
     
-    console.log('Processing query:', { userLanguage, query, channel, phone_number });
+    console.log('Processing query:', { userLanguage, query, channel, phone_number, sessionId });
     
-    // Step 1: Language detection and translation
+    // Router: Decide between Backend Fast Path or Gemini Agent Path
+    const context: ConversationContext = {
+      sessionId,
+      previousQueries: await getSessionHistoryAsync(sessionId),
+      metadata: {
+        language: userLanguage
+      }
+    };
+    
+    const routingDecision = shouldUseAgentMode(query, context);
+    
+    // Log routing decision
+    console.log('Routing decision:', {
+      useAgent: routingDecision.useAgent,
+      reason: routingDecision.reason,
+      complexityScore: routingDecision.complexityScore,
+      confidence: routingDecision.confidence
+    });
+    
+    metrics.recordHistogram('router_complexity_score', routingDecision.complexityScore);
+    metrics.incrementCounter(routingDecision.useAgent ? 'router_agent_path' : 'router_backend_path');
+    
+    // Detect language early (needed for both paths)
     const detectedLang = userLanguage || detectLanguage(query);
+    
+    // Route to Agent Path or Backend Fast Path
+    if (routingDecision.useAgent) {
+      try {
+        const agentResponse = await runAgentOrchestration({
+          query,
+          language: detectedLang,
+          sessionId,
+          context
+        });
+        
+        // Save agent response to database
+        const supabase = await getSupabaseClient(
+          getEnvVar('SUPABASE_URL') ?? '',
+          getEnvVar('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+        );
+        
+        const { data: savedQuery, error: dbError } = await supabase
+          .from('health_queries')
+          .insert({
+            user_language: detectedLang,
+            original_query: query,
+            translated_query: query, // Agent handles translation internally
+            response: agentResponse.response,
+            citations: agentResponse.citations,
+            is_emergency: false, // Agent handles emergency detection
+            accuracy_rating: 'pending',
+            channel: channel || 'web',
+            phone_number: phone_number || null
+          })
+          .select()
+          .single();
+        
+        if (dbError) {
+          console.error('Database error:', dbError);
+        }
+        
+        const duration = Date.now() - startTime;
+        
+        // Record agent metrics
+        metrics.incrementCounter('agent_requests_total');
+        metrics.recordHistogram('agent_latency_ms', agentResponse.latency);
+        metrics.recordHistogram('agent_cost_usd', agentResponse.costEstimate);
+        metrics.recordHistogram('agent_tool_calls', agentResponse.toolCalls.length);
+        
+        logger.logRequestEnd(requestId, req.method, '/health-query', 200, duration, {
+          mode: 'agent',
+          toolCalls: agentResponse.toolCalls.length,
+          complexityScore: routingDecision.complexityScore
+        });
+        
+        return new Response(
+          JSON.stringify({
+            id: savedQuery?.id || 'unknown',
+            translated_query: query,
+            response: agentResponse.response,
+            citations: agentResponse.citations,
+            is_emergency: false,
+            user_language: detectedLang,
+            pipeline_mode: 'agent',
+            tool_calls: agentResponse.toolCalls.length
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      } catch (agentError) {
+        console.error('Agent orchestration failed, falling back to backend:', agentError);
+        metrics.incrementCounter('agent_fallbacks_total');
+        
+        // Fallback to backend path (continue with existing backend logic below)
+        logger.logError(agentError as Error, {
+          requestId,
+          operation: 'agent_orchestration',
+          fallback: 'backend_rag'
+        });
+      }
+    }
+    
+    // Backend Fast Path (default for simple queries or agent fallback)
+    // Step 1: Translation (language already detected above)
     const translatedQuery = await translateText(query, detectedLang);
     
     console.log('Translation:', { detectedLang, translatedQuery });
@@ -193,8 +554,18 @@ serve(async (req) => {
     // Step 2: Emergency detection
     const isEmergency = detectEmergency(translatedQuery);
     
-    // Step 3: Retrieve relevant documents (RAG)
-    const retrievedDocs = retrieveRelevantDocs(translatedQuery);
+    // Step 3: Retrieve relevant documents (RAG with vector search)
+    logger.info('Retrieving relevant documents via RAG', {
+      query: translatedQuery.substring(0, 100),
+      language: detectedLang
+    });
+    
+    const retrievedDocs = await retrieveRelevantDocs(translatedQuery, detectedLang);
+    
+    logger.info('Retrieved documents', {
+      count: retrievedDocs.length,
+      sources: retrievedDocs.map(d => d.source)
+    });
     
     console.log('Retrieved docs:', retrievedDocs.length);
     
@@ -232,33 +603,43 @@ serve(async (req) => {
     }
     
     // Step 6: Save to database
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
+    const supabaseUrl = getEnvVar('SUPABASE_URL') || '';
+    const supabaseKey = getEnvVar('SUPABASE_SERVICE_ROLE_KEY') || '';
     
-    const { data: savedQuery, error: dbError } = await supabase
-      .from('health_queries')
-      .insert({
-        user_language: detectedLang,
-        original_query: query,
-        translated_query: translatedQuery,
-        response: finalResponse,
-        citations,
-        is_emergency: isEmergency,
-        accuracy_rating: 'pending',
-        channel: channel || 'web',
-        phone_number: phone_number || null
-      })
-      .select()
-      .single();
+    let savedQuery: any = null;
     
-    if (dbError) {
-      console.error('Database error:', dbError);
-      throw dbError;
+    if (supabaseUrl && supabaseKey) {
+      try {
+        const supabase = await getSupabaseClient(supabaseUrl, supabaseKey);
+        
+        const { data: queryData, error: dbError } = await supabase
+          .from('health_queries')
+          .insert({
+            user_language: detectedLang,
+            original_query: query,
+            translated_query: translatedQuery,
+            response: finalResponse,
+            citations,
+            is_emergency: isEmergency,
+            accuracy_rating: 'pending',
+            channel: channel || 'web',
+            phone_number: phone_number || null
+          })
+          .select()
+          .single();
+        
+        if (dbError) {
+          console.error('Database error:', dbError);
+        } else {
+          savedQuery = queryData;
+          console.log('Query saved to database:', savedQuery?.id);
+        }
+      } catch (dbErr) {
+        console.warn('Failed to save to database:', dbErr);
+      }
+    } else {
+      console.warn('Supabase credentials not configured, skipping database save');
     }
-    
-    console.log('Query saved to database:', savedQuery.id);
     
     const duration = Date.now() - startTime;
     
@@ -276,9 +657,12 @@ serve(async (req) => {
       responseLength: finalResponse.length
     });
 
+    // Persist conversation context (in-memory + optional Supabase)
+    await saveSessionQueryAsync(sessionId, query);
+
     return new Response(
       JSON.stringify({
-        id: savedQuery.id,
+        id: savedQuery?.id || 'unknown',
         translated_query: translatedQuery,
         response: finalResponse,
         citations,
@@ -306,4 +690,4 @@ serve(async (req) => {
       }
     );
   }
-});
+}

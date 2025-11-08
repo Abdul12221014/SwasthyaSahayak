@@ -1,5 +1,22 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
+// Load .env file
+try {
+  const envFile = await Deno.readTextFile('.env');
+  for (const line of envFile.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed && !trimmed.startsWith('#') && trimmed.includes('=')) {
+      const [key, ...valueParts] = trimmed.split('=');
+      const value = valueParts.join('=').replace(/^["']|["']$/g, '');
+      if (key && value) {
+        Deno.env.set(key.trim(), value.trim());
+      }
+    }
+  }
+} catch (error) {
+  console.warn('Could not load .env file:', error.message);
+}
+
 const PORT = parseInt(Deno.env.get("BACKEND_PORT") || "3001");
 const HOST = Deno.env.get("BACKEND_HOST") || "0.0.0.0";
 
@@ -13,14 +30,15 @@ const corsHeaders = {
 const routes = new Map([
   ['/api/healthz', 'health-simple.ts'],
   ['/api/readyz', 'health-simple.ts'],
-  ['/api/health-query', 'health-query-simple.ts'],
+  ['/api/health-query', 'health-query.ts'],
   ['/api/ingest-documents', 'ingest-documents.ts'],
   ['/api/reembed-kb', 'reembed-kb.ts'],
   ['/api/admin-queries', 'admin-queries.ts'],
   ['/api/vaccination-schedule', 'vaccination-schedule.ts'],
   ['/api/outbreak-alerts', 'outbreak-alerts.ts'],
   ['/api/sms-webhook', 'sms-webhook.ts'],
-  ['/api/whatsapp-webhook', 'whatsapp-webhook.ts']
+  ['/api/whatsapp-webhook', 'whatsapp-webhook.ts'],
+  ['/api/test-supabase', 'test-supabase.ts']
 ]);
 
 async function requestHandler(req: Request): Promise<Response> {
